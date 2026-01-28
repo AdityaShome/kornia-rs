@@ -49,6 +49,10 @@ pub enum ImageError {
     #[error("Invalid kernel length {0} and {1}")]
     InvalidKernelLength(usize, usize),
 
+    /// Error when the kernel size is invalid (must be odd and >= 3).
+    #[error("Invalid kernel size {0}: must be odd and >= 3")]
+    InvalidKernelSize(usize),
+
     /// Error when the sigma value is invalid.
     #[error("Invalid sigma values {0} and {1}")]
     InvalidSigmaValue(f32, f32),
