@@ -363,7 +363,13 @@ pub fn decode_tags<A: ImageAllocator>(
             return;
         }
 
-        config.tag_families.iter_mut().for_each(|family| {
+        config.tag_families.iter().for_each(|kind| {
+            // Convert TagFamilyKind to TagFamily for decoding
+            let mut family = match TagFamily::try_from(kind.clone()) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+
             if family.reversed_border != quad.reversed_border {
                 return;
             }
@@ -372,7 +378,7 @@ pub fn decode_tags<A: ImageAllocator>(
 
             let decision_margin = quad_decode(
                 src,
-                family,
+                &mut family,
                 quad,
                 config.decode_sharpening,
                 &mut entry,
@@ -396,7 +402,7 @@ pub fn decode_tags<A: ImageAllocator>(
                     let center = quad.homography_project(0.0, 0.0);
 
                     let detection = Detection {
-                        tag_family_kind: family.into(),
+                        tag_family_kind: kind.clone(),
                         id: entry.id,
                         hamming: entry.hamming,
                         decision_margin,
