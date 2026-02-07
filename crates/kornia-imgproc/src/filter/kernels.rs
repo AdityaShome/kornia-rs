@@ -40,6 +40,38 @@ pub fn gaussian_kernel_1d(kernel_size: usize, sigma: f32) -> Vec<f32> {
     kernel
 }
 
+/// Create a quantized gaussian kernel for integer operations.
+///
+/// # Arguments
+///
+/// * `kernel_size` - The size of the kernel.
+/// * `sigma` - The sigma of the gaussian kernel.
+///
+/// # Returns
+///
+/// A vector of i16 kernel values scaled by 256 (8-bit fixed point).
+pub fn gaussian_kernel_1d_i16(kernel_size: usize, sigma: f32) -> Vec<i16> {
+    let float_kernel = gaussian_kernel_1d(kernel_size, sigma);
+
+    let mut int_kernel: Vec<i16> = float_kernel
+        .iter()
+        .map(|&v| (v * 256.0).round() as i16)
+        .collect();
+
+    let sum: i32 = int_kernel.iter().map(|&x| x as i32).sum();
+    let diff = 256 - sum;
+    if diff != 0 {
+        let (max_idx, _) = int_kernel
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, &v)| v)
+            .unwrap();
+        int_kernel[max_idx] = (int_kernel[max_idx] as i32 + diff) as i16;
+    }
+
+    int_kernel
+}
+
 /// Create a sobel kernel.
 ///
 /// # Arguments

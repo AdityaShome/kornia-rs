@@ -1,13 +1,14 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use kornia_image::{Image, ImageError};
-use kornia_imgproc::filter::{box_blur_fast, gaussian_blur, kernels, separable_filter};
+use kornia_imgproc::filter::{box_blur_fast, gaussian_blur, gaussian_blur_u8, kernels, separable_filter};
+
 
 use image::RgbImage;
 use imageproc::filter::gaussian_blur_f32;
 use kornia_tensor::CpuAllocator;
 
-fn gaussian_blur_u8<const C: usize>(
+fn gaussian_blur_u8_generic<const C: usize>(
     src: &Image<u8, C, CpuAllocator>,
     dst: &mut Image<u8, C, CpuAllocator>,
     kernel_size: usize,
@@ -17,6 +18,7 @@ fn gaussian_blur_u8<const C: usize>(
     let kernel_y = kernels::gaussian_kernel_1d(kernel_size, sigma);
     separable_filter(src, dst, &kernel_x, &kernel_y)
 }
+
 
 fn bench_filters(c: &mut Criterion) {
     let mut group = c.benchmark_group("Gaussian Blur");
@@ -58,15 +60,32 @@ fn bench_filters(c: &mut Criterion) {
             );
 
             group.bench_with_input(
-                BenchmarkId::new("gaussian_blur_native_u8", &parameter_string),
+                BenchmarkId::new("gaussian_blur_generic_u8", &parameter_string),
                 &(&image_u8, &output_u8),
                 |b, i| {
                     let (src, mut dst) = (i.0, i.1.clone());
                     b.iter(|| {
-                        std::hint::black_box(gaussian_blur_u8(src, &mut dst, *kernel_size, 1.5))
+                        std::hint::black_box(gaussian_blur_u8_generic(src, &mut dst, *kernel_size, 1.5))
                     })
                 },
             );
+
+            group.bench_with_input(
+                BenchmarkId::new("gaussian_blur_integer_u8", &parameter_string),
+                &(&image_u8, &output_u8),
+                |b, i| {
+                    let (src, mut dst) = (i.0, i.1.clone());
+                    b.iter(|| {
+                        std::hint::black_box(gaussian_blur_u8(
+                            src,
+                            &mut dst,
+                            (*kernel_size, *kernel_size),
+                            (1.5, 1.5),
+                        ))
+                    })
+                },
+            );
+
 
             group.bench_with_input(
                 BenchmarkId::new("gaussian_blur_imageproc", &parameter_string),

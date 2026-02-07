@@ -90,6 +90,194 @@ pub fn gaussian_blur<const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
     Ok(())
 }
 
+/// Blur a u8 image using integer-only gaussian blur filter
+///
+/// # Arguments
+///
+/// * `src` - The source image with shape (H, W, C).
+/// * `dst` - The destination image with shape (H, W, C).
+/// * `kernel_size` - The size of the kernel (kernel_x, kernel_y). They can differ,
+///   but they both have to be positive and odd. Or, they can be zero
+///   and they will be computed from sigma values based on:
+///   kernel_size = 8*sigma + 1
+/// * `sigma` - The sigma of the gaussian kernel (sigma_x, sigma_y). sigma_y can
+///   be zero and it will take on the same value as sigma_x. Or, they
+///   can both be zero and they will be computed based on:
+///   sigma = (kernel_size - 1) / 8
+///
+/// PRECONDITION: `src` and `dst` must have the same shape.
+/// NOTE: This function uses constant border type and integer-only arithmetic.
+pub fn gaussian_blur_u8<const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
+    src: &Image<u8, C, A1>,
+    dst: &mut Image<u8, C, A2>,
+    kernel_size: (usize, usize),
+    sigma: (f32, f32),
+) -> Result<(), ImageError> {
+    let (mut kernel_x, mut kernel_y) = kernel_size;
+    let (mut sigma_x, mut sigma_y) = sigma;
+
+    if sigma_y <= 0.0 {
+        sigma_y = sigma_x;
+    }
+
+    if kernel_x == 0 && sigma_x > 0.0 {
+        kernel_x = (2.0 * (4.0 * sigma_x).round() + 1.0) as usize | 1;
+    }
+    if kernel_y == 0 && sigma_y > 0.0 {
+        kernel_y = (2.0 * (4.0 * sigma_y).round() + 1.0) as usize | 1;
+    }
+    if !(kernel_x > 0 && kernel_x % 2 == 1 && kernel_y > 0 && kernel_y % 2 == 1) {
+        return Err(ImageError::InvalidSigmaValue(sigma_x, sigma_y));
+    }
+
+    sigma_x = sigma_x.max(0.0);
+    sigma_y = sigma_y.max(0.0);
+
+    // Auto compute the sigma values using SciPy convention.
+    if sigma_x == 0.0 {
+        sigma_x = (kernel_x as f32 - 1.0) / 8.0;
+    }
+    if sigma_y == 0.0 {
+        sigma_y = (kernel_y as f32 - 1.0) / 8.0;
+    }
+
+    let kernel_x = kernels::gaussian_kernel_1d_i16(kernel_x, sigma_x);
+    let kernel_y = kernels::gaussian_kernel_1d_i16(kernel_y, sigma_y);
+    separable_filter_i16(src, dst, &kernel_x, &kernel_y)?;
+
+    Ok(())
+}
+
+/// Integer only separable filter for u8 images
+fn separable_filter_i16<const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
+    src: &Image<u8, C, A1>,
+    dst: &mut Image<u8, C, A2>,
+    kernel_x: &[i16],
+    kernel_y: &[i16],
+) -> Result<(), ImageError> {
+    if kernel_x.is_empty() || kernel_y.is_empty() {
+        return Err(ImageError::InvalidKernelLength(
+            kernel_x.len(),
+            kernel_y.len(),
+        ));
+    }
+
+    if src.size() != dst.size() {
+        return Err(ImageError::InvalidImageSize(
+            src.cols(),
+            src.rows(),
+            dst.cols(),
+            dst.rows(),
+        ));
+    }
+
+    let rows = src.rows();
+    let cols = src.cols();
+    let half_x = kernel_x.len() / 2;
+    let half_y = kernel_y.len() / 2;
+
+    let src_data = src.as_slice();
+    let dst_data = dst.as_slice_mut();
+    let mut temp = vec![0i32; src_data.len()];
+
+    // Horizontal pass
+    let safe_width = if cols > 2 * half_x {
+        cols - half_x
+    } else {
+        0
+    };
+
+    temp.par_chunks_mut(cols * C)
+        .enumerate()
+        .for_each(|(r, row_temp)| {
+            let row_offset = r * cols * C;
+            for c in 0..cols {
+                let mut acc = [0i32; C];
+                // Center region - no bounds checks needed
+                if c >= half_x && c < safe_width {
+                    for (k_idx, &k) in kernel_x.iter().enumerate() {
+                        // x is guaranteed valid here
+                        let x = c + k_idx - half_x;
+                        let idx = row_offset + x * C;
+                        for ch in 0..C {
+                            acc[ch] +=
+                                unsafe { *src_data.get_unchecked(idx + ch) as i32 * k as i32 };
+                        }
+                    }
+                } else {
+                    // Border region - requires bounds checks with clamping
+                    for (k_idx, &k) in kernel_x.iter().enumerate() {
+                        let x = (c as isize + k_idx as isize - half_x as isize)
+                            .clamp(0, cols as isize - 1);
+                        let idx = row_offset + x as usize * C;
+                        for ch in 0..C {
+                            acc[ch] +=
+                                unsafe { *src_data.get_unchecked(idx + ch) as i32 * k as i32 };
+                        }
+                    }
+                }
+                for ch in 0..C {
+                    unsafe {
+                        *row_temp.get_unchecked_mut(c * C + ch) = acc[ch];
+                    }
+                }
+            }
+        });
+
+
+    // Vertical pass
+    let safe_height = if rows > 2 * half_y {
+        rows - half_y
+    } else {
+        0
+    };
+
+    dst_data
+        .par_chunks_mut(cols * C)
+        .enumerate()
+        .for_each(|(r, row_dst)| {
+            if r >= half_y && r < safe_height {
+                for c in 0..cols {
+                    let mut acc = [0i32; C];
+                    for (k_idx, &k) in kernel_y.iter().enumerate() {
+                        let y = r + k_idx - half_y;
+                        let idx = y * cols * C + c * C;
+                        for ch in 0..C {
+                            acc[ch] += unsafe { *temp.get_unchecked(idx + ch) * k as i32 };
+                        }
+                    }
+                    for ch in 0..C {
+                        unsafe {
+                            *row_dst.get_unchecked_mut(c * C + ch) =
+                                ((acc[ch] + 32768) / 65536).clamp(0, 255) as u8;
+                        }
+                    }
+                }
+            } else {
+                // Border rows - bounds checks with clamping
+                for c in 0..cols {
+                    let mut acc = [0i32; C];
+                    for (k_idx, &k) in kernel_y.iter().enumerate() {
+                        let y = (r as isize + k_idx as isize - half_y as isize)
+                            .clamp(0, rows as isize - 1);
+                        let idx = y as usize * cols * C + c * C;
+                        for ch in 0..C {
+                            acc[ch] += unsafe { *temp.get_unchecked(idx + ch) * k as i32 };
+                        }
+                    }
+                    for ch in 0..C {
+                        unsafe {
+                            *row_dst.get_unchecked_mut(c * C + ch) =
+                                ((acc[ch] + 32768) / 65536).clamp(0, 255) as u8;
+                        }
+                    }
+                }
+            }
+        });
+
+    Ok(())
+}
+
 /// Computer sobel filter
 ///
 /// # Arguments
@@ -486,6 +674,31 @@ mod tests {
               19.985254, 20.991283, 21.990952, 22.990616, 23.981903,
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_gaussian_blur_u8() -> Result<(), ImageError> {
+        let size = ImageSize {
+            width: 5,
+            height: 5,
+        };
+
+        let data: Vec<u8> = vec![
+            10, 20, 30, 40, 50, 
+            15, 25, 35, 45, 55, 
+            20, 30, 100, 50,60, 
+            25, 35, 45, 55, 65, 
+            30, 40, 50, 60, 70,
+        ];
+        let img = Image::new(size, data, CpuAllocator)?;
+        let mut dst = Image::<u8, 1, _>::from_size_val(size, 0, CpuAllocator)?;
+        gaussian_blur_u8(&img, &mut dst, (3, 3), (0.5, 0.5))?;
+
+        let center_pixel = dst.as_slice()[12];
+        assert_ne!(center_pixel, 100);
+        assert!(center_pixel > 60 && center_pixel < 90);
+
         Ok(())
     }
 
