@@ -1,5 +1,6 @@
 use kornia_image::{allocator::ImageAllocator, Image, ImageError};
 use num_traits::Zero;
+use rayon::prelude::*;
 
 /// Trait for floating point casting
 pub trait FloatConversion {
@@ -90,7 +91,7 @@ impl SeparableFilter {
         dst: &mut Image<T, C, A2>,
     ) -> Result<(), ImageError>
     where
-        T: FloatConversion + Clone + Zero,
+        T: FloatConversion + Clone + Zero + Send + Sync,
     {
         let rows = src.rows();
         let cols = src.cols();
@@ -99,58 +100,59 @@ impl SeparableFilter {
         let dst_data = dst.as_slice_mut();
         let mut temp = vec![0.0f32; src_data.len()];
 
-        // Horizontal
-        for r in 0..rows {
-            let row_offset = r * cols * C;
+        // Horizontal (parallel)
+        temp.par_chunks_mut(cols * C)
+            .enumerate()
+            .for_each(|(r, row_temp)| {
+                let row_offset = r * cols * C;
 
-            for c in 0..cols {
-                let mut acc = [0.0f32; C];
+                for c in 0..cols {
+                    let mut acc = [0.0f32; C];
+                    for (&k, &off) in self.kernel_x.iter().zip(self.offsets_x.iter()) {
+                        let x = c as isize + off;
+                        if x >= 0 && x < cols as isize {
+                            let idx = row_offset + x as usize * C;
+                            for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
+                                *acc_val +=
+                                    unsafe { src_data.get_unchecked(idx + ch).to_f32() } * k;
+                            }
+                        }
+                    }
 
-                for (&k, &off) in self.kernel_x.iter().zip(self.offsets_x.iter()) {
-                    let x = c as isize + off;
-                    if x >= 0 && x < cols as isize {
-                        let idx = row_offset + x as usize * C;
-                        for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
-                            *acc_val += unsafe { src_data.get_unchecked(idx + ch).to_f32() } * k;
+                    let out_idx = c * C;
+                    for (ch, &acc_val) in acc.iter().enumerate().take(C) {
+                        unsafe {
+                            *row_temp.get_unchecked_mut(out_idx + ch) = acc_val;
                         }
                     }
                 }
+            });
 
-                let out_idx = row_offset + c * C;
-                for (ch, &acc_val) in acc.iter().enumerate().take(C) {
-                    unsafe {
-                        *temp.get_unchecked_mut(out_idx + ch) = acc_val;
+        // Vertical (parallel)
+        dst_data
+            .par_chunks_mut(cols * C)
+            .enumerate()
+            .for_each(|(r, row_dst)| {
+                for c in 0..cols {
+                    let mut acc = [0.0f32; C];
+                    for (&k, &off) in self.kernel_y.iter().zip(self.offsets_y.iter()) {
+                        let y = r as isize + off;
+                        if y >= 0 && y < rows as isize {
+                            let idx = y as usize * cols * C + c * C;
+                            for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
+                                *acc_val += unsafe { *temp.get_unchecked(idx + ch) } * k;
+                            }
+                        }
                     }
-                }
-            }
-        }
 
-        // Vertical
-        for r in 0..rows {
-            let row_offset = r * cols * C;
-
-            for c in 0..cols {
-                let mut acc = [0.0f32; C];
-
-                for (&k, &off) in self.kernel_y.iter().zip(self.offsets_y.iter()) {
-                    let y = r as isize + off;
-                    if y >= 0 && y < rows as isize {
-                        let idx = y as usize * cols * C + c * C;
-                        for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
-                            *acc_val += unsafe { *temp.get_unchecked(idx + ch) } * k;
+                    let out_idx = c * C;
+                    for (ch, &acc_val) in acc.iter().enumerate().take(C) {
+                        unsafe {
+                            *row_dst.get_unchecked_mut(out_idx + ch) = T::from_f32(acc_val);
                         }
                     }
                 }
-
-                let out_idx = row_offset + c * C;
-                for (ch, &acc_val) in acc.iter().enumerate().take(C) {
-                    unsafe {
-                        *dst_data.get_unchecked_mut(out_idx + ch) = T::from_f32(acc_val);
-                    }
-                }
-            }
-        }
-
+            });
         Ok(())
     }
 }
@@ -170,7 +172,7 @@ pub fn separable_filter<T, const C: usize, A1: ImageAllocator, A2: ImageAllocato
     kernel_y: &[f32],
 ) -> Result<(), ImageError>
 where
-    T: FloatConversion + Clone + Zero,
+    T: FloatConversion + Clone + Zero + Send + Sync,
 {
     if kernel_x.is_empty() || kernel_y.is_empty() {
         return Err(ImageError::InvalidKernelLength(
