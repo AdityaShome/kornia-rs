@@ -77,7 +77,15 @@ impl SeparableFilter {
         }
     }
 
-    /// Apply the filter with execution strategy control.
+    /// Apply the filter to an image with execution strategy control.
+    ///
+    /// Performs horizontal filtering followed by vertical filtering using a temporary buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - The source image
+    /// * `dst` - The destination image (must be same size as source)
+    /// * `strategy` - The execution strategy (Serial, Parallel, or Auto)
     fn apply<T, const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
         &self,
         src: &Image<T, C, A1>,
@@ -243,15 +251,6 @@ impl SeparableFilter {
 /// * `kernel_x` - The horizontal kernel.
 /// * `kernel_y` - The vertical kernel.
 /// * `strategy` - Execution strategy: `Serial`, `Parallel`, or `Auto`.
-///
-/// # Examples
-///
-/// ```ignore
-/// use kornia_imgproc::parallel::ExecutionStrategy;
-///
-/// separable_filter_with_strategy(&src, &mut dst, &kx, &ky, ExecutionStrategy::Serial)?;
-/// separable_filter_with_strategy(&src, &mut dst, &kx, &ky, ExecutionStrategy::Parallel)?;
-/// ```
 pub fn separable_filter_with_strategy<T, const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
     src: &Image<T, C, A1>,
     dst: &mut Image<T, C, A2>,
