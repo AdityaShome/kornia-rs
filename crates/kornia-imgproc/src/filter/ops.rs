@@ -1,3 +1,6 @@
+use crate::filter::kernels;
+use crate::filter::separable_filter::separable_filter;
+use crate::parallel::ExecutionStrategy;
 use kornia_image::{allocator::ImageAllocator, Image, ImageError, ImageSize};
 use kornia_tensor::CpuAllocator;
 use rayon::{
@@ -5,8 +8,7 @@ use rayon::{
     slice::ParallelSliceMut,
 };
 
-use crate::parallel::ExecutionStrategy;
-use super::{fast_horizontal_filter, kernels, separable_filter};
+use super::fast_horizontal_filter;
 
 /// Blur an image using a box blur filter
 ///

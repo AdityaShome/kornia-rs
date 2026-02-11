@@ -1,5 +1,7 @@
 use kornia_image::{allocator::ImageAllocator, Image, ImageError};
 use num_traits::Zero;
+use rayon::prelude::*;
+use crate::parallel::ExecutionStrategy;
 
 /// Trait for floating point casting
 pub trait FloatConversion {
@@ -84,14 +86,20 @@ impl SeparableFilter {
     ///
     /// * `src` - The source image
     /// * `dst` - The destination image (must be same size as source)
+    /// * `strategy` - The execution strategy (Serial, ParallelElements, AutoRows, Fixed)
     fn apply<T, const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
         &self,
         src: &Image<T, C, A1>,
         dst: &mut Image<T, C, A2>,
+        strategy: ExecutionStrategy,
     ) -> Result<(), ImageError>
     where
-        T: FloatConversion + Clone + Zero,
+        T: FloatConversion + Clone + Zero + Send + Sync,
     {
+        if src.rows() == 0 || src.cols() == 0 {
+            return Ok(());
+        }
+
         let rows = src.rows();
         let cols = src.cols();
 
@@ -99,55 +107,120 @@ impl SeparableFilter {
         let dst_data = dst.as_slice_mut();
         let mut temp = vec![0.0f32; src_data.len()];
 
-        // Horizontal
-        for r in 0..rows {
-            let row_offset = r * cols * C;
+        match strategy {
+            ExecutionStrategy::Serial => {
+                // Horizontal
+                for r in 0..rows {
+                    let row_offset = r * cols * C;
 
-            for c in 0..cols {
-                let mut acc = [0.0f32; C];
+                    for c in 0..cols {
+                        let mut acc = [0.0f32; C];
 
-                for (&k, &off) in self.kernel_x.iter().zip(self.offsets_x.iter()) {
-                    let x = c as isize + off;
-                    if x >= 0 && x < cols as isize {
-                        let idx = row_offset + x as usize * C;
-                        for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
-                            *acc_val += unsafe { src_data.get_unchecked(idx + ch).to_f32() } * k;
+                        for (&k, &off) in self.kernel_x.iter().zip(self.offsets_x.iter()) {
+                            let x = c as isize + off;
+                            if x >= 0 && x <cols as isize {
+                                let idx = row_offset + x as usize * C;
+                                for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
+                                    *acc_val += unsafe { src_data.get_unchecked(idx + ch).to_f32() } * k;
+                                }
+                            }
+                        }
+
+                        let out_idx = row_offset + c * C;
+                        for (ch, &acc_val) in acc.iter().enumerate().take(C) {
+                            unsafe {
+                                *temp.get_unchecked_mut(out_idx + ch) = acc_val;
+                            }
                         }
                     }
                 }
+            }
+            ExecutionStrategy::ParallelElements | ExecutionStrategy::AutoRows(_) | ExecutionStrategy::Fixed(_) => {
+                // Horizontal (parallel)
+                temp.par_chunks_mut(cols * C)
+                    .enumerate()
+                    .for_each(|(r, row_temp)| {
+                        let row_offset = r * cols * C;
 
-                let out_idx = row_offset + c * C;
-                for (ch, &acc_val) in acc.iter().enumerate().take(C) {
-                    unsafe {
-                        *temp.get_unchecked_mut(out_idx + ch) = acc_val;
-                    }
-                }
+                        for c in 0..cols {
+                            let mut acc = [0.0f32; C];
+
+                            for (&k, &off) in self.kernel_x.iter().zip(self.offsets_x.iter()) {
+                                let x = c as isize + off;
+                                if x >= 0 && x < cols as isize {
+                                    let idx = row_offset + x as usize * C;
+                                    for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
+                                        *acc_val += unsafe { src_data.get_unchecked(idx + ch).to_f32() } * k;
+                                    }
+                                }
+                            }
+
+                            let out_idx = c * C;
+                            for (ch, &acc_val) in acc.iter().enumerate().take(C) {
+                                unsafe {
+                                    *row_temp.get_unchecked_mut(out_idx + ch) = acc_val;
+                                }
+                            }
+                        }
+                    });
             }
         }
 
         // Vertical
-        for r in 0..rows {
-            let row_offset = r * cols * C;
+        match strategy {
+            ExecutionStrategy::Serial => {
+                for r in 0..rows {
+                    let row_offset = r * cols * C;
 
-            for c in 0..cols {
-                let mut acc = [0.0f32; C];
+                    for c in 0..cols {
+                        let mut acc = [0.0f32; C];
 
-                for (&k, &off) in self.kernel_y.iter().zip(self.offsets_y.iter()) {
-                    let y = r as isize + off;
-                    if y >= 0 && y < rows as isize {
-                        let idx = y as usize * cols * C + c * C;
-                        for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
-                            *acc_val += unsafe { *temp.get_unchecked(idx + ch) } * k;
+                        for (&k, &off) in self.kernel_y.iter().zip(self.offsets_y.iter()) {
+                            let y = r as isize + off;
+                            if y >= 0 && y < rows as isize {
+                                let idx = y as usize * cols * C + c * C;
+                                for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
+                                    *acc_val += unsafe { *temp.get_unchecked(idx + ch) } * k;
+                                }
+                            }
+                        }
+
+                        let out_idx = row_offset + c * C;
+                        for (ch, &acc_val) in acc.iter().enumerate().take(C) {
+                            unsafe {
+                                *dst_data.get_unchecked_mut(out_idx + ch) = T::from_f32(acc_val);
+                            }
                         }
                     }
                 }
+            }
+            ExecutionStrategy::ParallelElements | ExecutionStrategy::AutoRows(_) | ExecutionStrategy::Fixed(_) => {
+                // Vertical (parallel)
+                let temp_read: &[f32] = &temp;
+                dst_data.par_chunks_mut(cols * C)
+                    .enumerate()
+                    .for_each(|(r, row_dst)| {
+                        for c in 0..cols {
+                            let mut acc = [0.0f32; C];
 
-                let out_idx = row_offset + c * C;
-                for (ch, &acc_val) in acc.iter().enumerate().take(C) {
-                    unsafe {
-                        *dst_data.get_unchecked_mut(out_idx + ch) = T::from_f32(acc_val);
-                    }
-                }
+                            for (&k, &off) in self.kernel_y.iter().zip(self.offsets_y.iter()) {
+                                let y = r as isize + off;
+                                if y >= 0 && y < rows as isize {
+                                    let idx = y as usize * cols * C + c * C;
+                                    for (ch, acc_val) in acc.iter_mut().enumerate().take(C) {
+                                        *acc_val += unsafe { *temp_read.get_unchecked(idx + ch) } * k;
+                                    }
+                                }
+                            }
+
+                            let out_idx = c * C;
+                            for (ch, &acc_val) in acc.iter().enumerate().take(C) {
+                                unsafe {
+                                    *row_dst.get_unchecked_mut(out_idx + ch) = T::from_f32(acc_val);
+                                }
+                            }
+                        }
+                    });
             }
         }
 
@@ -163,14 +236,16 @@ impl SeparableFilter {
 /// * `dst` - The destination image with shape (H, W, C).
 /// * `kernel_x` - The horizontal kernel.
 /// * `kernel_y` - The vertical kernel.
+/// * `strategy` - The execution strategy (Serial, ParallelElements, AutoRows, Fixed).
 pub fn separable_filter<T, const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
     src: &Image<T, C, A1>,
     dst: &mut Image<T, C, A2>,
     kernel_x: &[f32],
     kernel_y: &[f32],
+    strategy: ExecutionStrategy,
 ) -> Result<(), ImageError>
 where
-    T: FloatConversion + Clone + Zero,
+    T: FloatConversion + Clone + Zero + Send + Sync,
 {
     if kernel_x.is_empty() || kernel_y.is_empty() {
         return Err(ImageError::InvalidKernelLength(
@@ -189,7 +264,7 @@ where
     }
 
     let filter = SeparableFilter::new(kernel_x, kernel_y);
-    filter.apply(src, dst)
+    filter.apply(src, dst, strategy)
 }
 
 /// Apply a fast filter horizontally using cumulative kernel
@@ -285,7 +360,7 @@ mod tests {
         let mut dst = Image::<_, 1, _>::from_size_val(img.size(), 0f32, CpuAllocator)?;
         let kernel_x = vec![1.0, 1.0, 1.0];
         let kernel_y = vec![1.0, 1.0, 1.0];
-        separable_filter(&img, &mut dst, &kernel_x, &kernel_y)?;
+        separable_filter(&img, &mut dst, &kernel_x, &kernel_y, ExecutionStrategy::Serial)?;
 
         #[rustfmt::skip]
         assert_eq!(
@@ -328,7 +403,7 @@ mod tests {
         let mut dst = Image::<u8, 1, _>::from_size_val(img.size(), 0, CpuAllocator)?;
         let kernel_x = vec![1.0, 1.0, 1.0];
         let kernel_y = vec![1.0, 1.0, 1.0];
-        separable_filter(&img, &mut dst, &kernel_x, &kernel_y)?;
+        separable_filter(&img, &mut dst, &kernel_x, &kernel_y, ExecutionStrategy::Serial)?;
 
         #[rustfmt::skip]
         assert_eq!(
@@ -358,7 +433,7 @@ mod tests {
         img.as_slice_mut()[12] = 255;
 
         let mut dst = Image::<u8, 1, _>::from_size_val(size, 0, CpuAllocator)?;
-        separable_filter(&img, &mut dst, &kernel_x, &kernel_y)?;
+        separable_filter(&img, &mut dst, &kernel_x, &kernel_y, ExecutionStrategy::Serial)?;
 
         #[rustfmt::skip]
         assert_eq!(
