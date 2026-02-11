@@ -1,5 +1,6 @@
 use crate::filter::separable_filter;
 use crate::interpolation::InterpolationMode;
+use crate::parallel::ExecutionStrategy;
 use crate::resize::resize_native;
 use kornia_image::{allocator::ImageAllocator, Image, ImageError};
 use kornia_tensor::CpuAllocator;
@@ -88,7 +89,7 @@ pub fn pyrup<const C: usize, A1: ImageAllocator, A2: ImageAllocator>(
     resize_native(src, &mut upsampled, InterpolationMode::Bilinear)?;
 
     let (kernel_x, kernel_y) = get_pyramid_gaussian_kernel();
-    separable_filter(&upsampled, dst, &kernel_x, &kernel_y)?;
+    separable_filter(&upsampled, dst, &kernel_x, &kernel_y, ExecutionStrategy::AutoRows(upsampled.width() * C))?;
 
     Ok(())
 }
