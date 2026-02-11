@@ -39,6 +39,7 @@ runs:
         echo "SCCACHE_CACHE_SIZE=6G" >> $GITHUB_ENV
         echo "SCCACHE_ERROR_LOG=/tmp/sccache_log.txt" >> $GITHUB_ENV
         echo "SCCACHE_LOG=info" >> $GITHUB_ENV
+        echo "SCCACHE_IDLE_TIMEOUT=0" >> $GITHUB_ENV
 
     - name: Install sccache
       if: inputs.with-sccache == 'true'

@@ -1,3 +1,4 @@
+# ci: verify sccache idle timeout fix
 [workspace]
 resolver = "2"
 members = [
