@@ -1,0 +1,16 @@
+[package]
+name = "kornia-gpu-benches"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kornia-gpu = { path = "..", features = ["gpu"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[lib]
+name = "gpu_benches"
+path = "benches.rs"
+
+[[bench]]
+name = "tensor_ops"
+harness = false

@@ -1,0 +1,42 @@
+[package]
+name = "kornia-gpu"
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+description = "GPU acceleration backend for kornia using CubeCL"
+homepage = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+publish = true
+
+[dependencies]
+kornia-image = { workspace = true }
+kornia-tensor = { workspace = true }
+thiserror = { workspace = true }
+
+# CubeCL core dependencies (optional)
+cubecl = { version = "0.3", default-features = false, optional = true }
+cubecl-core = { version = "0.3", optional = true }
+
+# Backend-specific dependencies (optional)
+cubecl-cuda = { version = "0.3", optional = true }
+cubecl-wgpu = { version = "0.3", optional = true }
+
+# Optional native CUDA support
+cudarc = { version = "0.12", optional = true }
+
+# Memory utilities
+bytemuck = "1.24"
+
+[dev-dependencies]
+kornia-io = { workspace = true }
+
+[features]
+default = []
+# GPU backend selection
+gpu = ["dep:cubecl", "dep:cubecl-core"]
+cuda = ["gpu", "dep:cubecl-cuda"]
+wgpu = ["gpu", "dep:cubecl-wgpu"]
+# Advanced NVIDIA-specific optimizations
+cuda-native = ["cuda", "dep:cudarc"]

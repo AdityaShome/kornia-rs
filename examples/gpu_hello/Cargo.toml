@@ -1,0 +1,20 @@
+[package]
+name = "gpu_hello"
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+publish = false
+
+[dependencies]
+kornia-gpu = { workspace = true, features = ["gpu"] }
+kornia-tensor = { workspace = true }
+
+[features]
+default = []
+cuda = ["kornia-gpu/cuda"]
+wgpu = ["kornia-gpu/wgpu"]
+
+[[bin]]
+name = "hello_kernel"
+path = "src/main.rs"
