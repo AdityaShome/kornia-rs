@@ -43,3 +43,5 @@ runs:
     - name: Install sccache
       if: inputs.with-sccache == 'true'
       uses: mozilla-actions/sccache-action@v0.0.9
+      with:
+        version: "v0.13.0"
