@@ -32,12 +32,15 @@ jobs:
           - name: Rustfmt
             command: rust-fmt-check
             needs-sccache: false
+            sccache-scope: fmt
           - name: Clippy
             command: rust-clippy
             needs-sccache: true
+            sccache-scope: clippy
           - name: Check
             command: rust-check
             needs-sccache: true
+            sccache-scope: check
 
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +48,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-cache
         with:
           with-sccache: ${{ matrix.needs-sccache }}
+          sccache-scope: ${{ matrix.sccache-scope }}
 
       - uses: prefix-dev/setup-pixi@v0.8.1
         with:

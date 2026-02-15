@@ -59,6 +59,8 @@ jobs:
           submodules: recursive
 
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache-scope: py
 
       - uses: prefix-dev/setup-pixi@v0.8.1
         with:
