@@ -1,3 +1,4 @@
+#testing sccache write permission
 [workspace]
 resolver = "2"
 members = [
