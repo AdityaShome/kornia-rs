@@ -13,10 +13,6 @@ inputs:
     description: Whether to install sccache
     required: false
     default: "true"
-  sccache-scope:
-    description: Scope name for sccache cache key (e.g. debug, release, clippy, py)
-    required: false
-    default: "default"
 runs:
   using: composite
   steps:
@@ -31,15 +27,24 @@ runs:
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
           ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ runner.arch }}-
+    - name: Install sccache
+      if: inputs.with-sccache == 'true'
+      uses: mozilla-actions/sccache-action@v0.0.9
     - name: Setup sccache environment
       if: inputs.with-sccache == 'true'
       shell: bash
       run: |
         echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
         echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+        echo "SCCACHE_CACHE_SIZE=6G" >> $GITHUB_ENV
+        echo "SCCACHE_ERROR_LOG=/tmp/sccache_log.txt" >> $GITHUB_ENV
+        echo "SCCACHE_LOG=info" >> $GITHUB_ENV
         echo "SCCACHE_IDLE_TIMEOUT=0" >> $GITHUB_ENV
         echo "CARGO_INCREMENTAL=0" >> $GITHUB_ENV
-        echo "SCCACHE_GHA_CACHE_KEY=sccache-${{ inputs.sccache-scope }}-${{ runner.os }}-${{ runner.arch }}" >> $GITHUB_ENV
-    - name: Install sccache
+    - name: Ensure sccache server is running
       if: inputs.with-sccache == 'true'
-      uses: mozilla-actions/sccache-action@v0.0.9
+      shell: bash
+      run: |
+        sccache --stop-server 2>/dev/null || true
+        sccache --start-server || true
+        sccache --show-stats || echo "Warning: sccache server may not be running properly"
