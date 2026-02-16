@@ -1,5 +1,7 @@
 name: Python Test
-
+permissions:
+  actions: write
+  contents: read
 on:
   workflow_dispatch:
   push:
