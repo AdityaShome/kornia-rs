@@ -5,7 +5,6 @@ use crate::{
     family::{TagFamily, TagFamilyKind},
     quad::Quad,
     utils::value_for_pixel,
-    DecodeTagsConfig,
 };
 use kornia_algebra::Mat3F32;
 use kornia_image::{allocator::ImageAllocator, Image};
@@ -929,6 +928,7 @@ mod tests {
         threshold::{adaptive_threshold, TileMinMax},
         union_find::UnionFind,
         utils::Pixel,
+        DecodeTagsConfig,
     };
     use kornia_algebra::Vec2F32;
     use kornia_image::allocator::CpuAllocator;
